@@ -86,15 +86,20 @@ ssize_t read_with_wrap(struct basex *b, int garbage,int fd)
 }
 void write_with_wrap(struct basex *b, ssize_t cwrap, ssize_t lwrap, int fd)
 {	static ssize_t _cwrap_ = 0, _lwrap_ = 1;
+	int v = 0,v_ = 0, v__ = 0;;
 	static ssize_t inc;
 	for( 	inc = 0;
-		inc <b->outdef;
-		lwrap != 0 && _lwrap_ == lwrap && _cwrap_ == cwrap &&( write(fd,"\n",1),_lwrap_ = 1, _cwrap_ = 0),
-		_cwrap_ != 0 && _cwrap_ == cwrap && (write(fd," ",1),_cwrap_ = 0,_lwrap_++ ),
-		b->output[inc] != '\0' && write(fd,&b->output[inc],1),
+		inc < b->outdef && errno == 0;
+		lwrap != 0 && _lwrap_ == lwrap && _cwrap_ == cwrap &&( (v = write(fd,"\n",1)) > 0,_lwrap_ = 1, _cwrap_ = 0),
+		errno == 0 && _cwrap_ != 0 && _cwrap_ == cwrap && ((v_ = write(fd," ",1) > 0),_cwrap_ = 0,_lwrap_++ ),
+		errno == 0 && b->output[inc] != '\0' && (v_ = write(fd,&b->output[inc],1)) > 0,
 		inc++,
 		_cwrap_++
 	);
+	if(v < 0 || v_ < 0 || v__ < 0){
+		perror("write()");
+		exit(EXIT_FAILURE);
+	}
 }
 ssize_t buf_unwrap(char *buffer,char *orig,ssize_t len)
 {	char *pbuf, *pbuf_;
@@ -269,7 +274,10 @@ int main(int argc, char **argv)
 					destroy(b->input,&args.infile,&args.outfile);
 					exit(EXIT_FAILURE);
 				}
-				write(args.outfile,b->input,b->indef);
+				if(write(args.outfile,b->input,b->indef) < 0){
+					perror("write()");
+					exit(EXIT_FAILURE);
+				}
 				memset(b->output,'\0',b->outdef);
 				memset(b->input,'\0',b->indef);
 			}
@@ -317,7 +325,10 @@ int main(int argc, char **argv)
 							exit(EXIT_FAILURE);
 						}
 						b->fait.dec(b->output,b->input);
-						write(args.outfile,b->input,b->indef);
+						if(write(args.outfile,b->input,b->indef) < 0){
+							perror("write()");
+							exit(EXIT_FAILURE);
+						}
 						args.buffer += (b->outdef + i);
 						args.buflen -= (b->outdef + i);
 					}
