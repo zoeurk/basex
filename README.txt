@@ -1,3 +1,6 @@
+soit
+make -f Makefile.src
+ou:
 aclocal
 autoconf
 autoreconf --install
