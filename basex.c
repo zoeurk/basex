@@ -90,7 +90,7 @@ void write_with_wrap(struct basex *b, ssize_t cwrap, ssize_t lwrap, int fd)
 	static ssize_t inc;
 	for( 	inc = 0;
 		inc < b->outdef && errno == 0;
-		lwrap != 0 && _lwrap_ == lwrap && _cwrap_ == cwrap &&( (v = write(fd,"\n",1)) > 0,_lwrap_ = 1, _cwrap_ = 0),
+		lwrap != 0 && _lwrap_ == lwrap && _cwrap_ == cwrap && ((v = write(fd,"\n",1)) > 0,_lwrap_ = 1, _cwrap_ = 0),
 		errno == 0 && _cwrap_ != 0 && _cwrap_ == cwrap && ((v_ = write(fd," ",1) > 0),_cwrap_ = 0,_lwrap_++ ),
 		errno == 0 && b->output[inc] != '\0' && (v_ = write(fd,&b->output[inc],1)) > 0,
 		inc++,
