@@ -112,7 +112,7 @@ ssize_t buf_unwrap(char *buffer,char *orig,ssize_t len)
 					pbuf++,
 					pbuf_++,i++
 				),
-		(pbuf[0] == ' ' || pbuf[0] == '\n') && (++j,pbuf++)
+		(pbuf[0] == ' ' || pbuf[0] == '\n' || pbuf[0] == '\t') && (++j,pbuf++)
 
 	);
 	return j;
