@@ -107,7 +107,7 @@ ssize_t buf_unwrap(char *buffer,char *orig,ssize_t len)
 		pbuf_ = buffer,
 		i = j = 0;
 		*pbuf != '\0' && len >i;
-		pbuf[0] != ' '	&& pbuf[0] != '\n' 
+		pbuf[0] != ' '	&& pbuf[0] != '\n'  && pbuf[0] != '\t'
 				&&(	*pbuf_ = *pbuf,
 					pbuf++,
 					pbuf_++,i++
