@@ -71,122 +71,86 @@ int squeeze_char(char buffer,char *nocharlist)
 	return 1;
 }
 ssize_t read_with_wrap(struct basex *b, int garbage,int fd)
-{	ssize_t inc = 0;
+{	ssize_t inc;
 	char *pbuf = b->output;
-	while(inc < b->outdef && read(fd,pbuf,1) > 0)
-		if(b->pad && *pbuf == *b->pad){
-			inc++;
-			pbuf++;
-		}else{
-			switch(garbage){
-				case 0:
-					if((squeeze_char(*pbuf," \n"))){
-						inc++;
-						pbuf++;
-					}
-					break;
-				default:
-					if(!squeeze_char(*pbuf,b->alpha)){
-						inc++;
-						pbuf++;
-					}
-					break;
-			}
-		}
+	for(	inc = 0;
+		inc < b->outdef && read(fd,pbuf,1);
+		((garbage != 0 && (	squeeze_char(b->output[inc],b->alpha) == 0 
+					|| (b->pad && b->output[inc] == *b->pad))
+		) && (inc++,pbuf++,1))
+		|| (garbage == 0 && (	squeeze_char(b->output[inc]," \n") != 0
+					|| (b->pad && b->output[inc] == *b->pad)) && (pbuf++,inc++,1)
+		)
+	);
 	return inc;
 }
 void write_with_wrap(struct basex *b, ssize_t cwrap, ssize_t lwrap, int fd)
 {	static ssize_t _cwrap_ = 0, _lwrap_ = 1;
 	static ssize_t inc;
-	for(inc = 0; inc < b->outdef; _cwrap_++, inc++){
-		if(lwrap && _cwrap_ == cwrap){
-			if(write(fd, "\n", 1) < 0){
-				perror("write()");
-				exit(EXIT_FAILURE);
-			}
-			_lwrap_ = 1;
-			_cwrap_ = 0;
-		}
-		if(_cwrap_ != 0 && _cwrap_ == cwrap){
-			if(write(fd," ",1) < 0){
-				perror("write()");
-				exit(EXIT_FAILURE);
-			}
-			_cwrap_ = 0;
-			_lwrap_++;
-		}
-		if(b->output[inc] != '\0')
-			if(write(fd,&b->output[inc],1) < 0){
-				perror("write()");
-				exit(EXIT_FAILURE);
-			}
+	for( 	inc = 0;
+		inc < b->outdef && errno == 0;
+		lwrap != 0 && _lwrap_ == lwrap && _cwrap_ == cwrap && (write(fd,"\n",1),_lwrap_ = 1, _cwrap_ = 0),
+		errno == 0 && _cwrap_ != 0 && _cwrap_ == cwrap && (write(fd," ",1),_cwrap_ = 0,_lwrap_++ ),
+		errno == 0 && b->output[inc] != '\0' && write(fd,&b->output[inc],1),
+		inc++,
+		_cwrap_++
+	);
+	if(errno){
+		perror("write()");
+		exit(EXIT_FAILURE);
 	}
 }
 ssize_t buf_unwrap(char *buffer,char *orig,ssize_t len)
-{	char *pbuf = orig, *pbuf_ = buffer;
-	ssize_t i = 0,j = 0;
-	do
-		switch(*pbuf){
-			case ' ':case '\n': case '\t':
-				j++;
-				len++;
-				pbuf++;
-				break;
-			default:
-				*pbuf_ = *pbuf;
-				pbuf_++;
-				pbuf++;
-				i++;
-				break;
-		}
-	while(*pbuf && len > i);
+{	char *pbuf, *pbuf_;
+	ssize_t i,j;
+	for(	pbuf = orig,
+		pbuf_ = buffer,
+		i = j = 0;
+		*pbuf != '\0' && len >i;
+		pbuf[0] != ' '	&& pbuf[0] != '\n'  && pbuf[0] != '\t'
+				&&(	*pbuf_ = *pbuf,
+					pbuf++,
+					pbuf_++,i++
+				),
+		(pbuf[0] == ' ' || pbuf[0] == '\n' || pbuf[0] == '\t') && (++j,pbuf++)
+
+	);
 	return j;
 }
 void buf_garbage(struct basex *b, int offset,char *buffer, off_t *buflen)
 {	char *pbuf,*pbuf_;
-	pbuf = pbuf_ = buffer;
-	do
-		if((squeeze_char(*pbuf,b->alpha) == 1)){
-			pbuf++;
-			//buffer++;
-			buflen[0]--;
-		}else{
-			*pbuf_ = *pbuf;
-			pbuf++;
-			pbuf_++;
-			*pbuf_ = 0;
-		}
-	while(*pbuf != '\0' && buflen[0]>0);
+	for(	pbuf = pbuf_ = buffer;
+		*pbuf != '\0' && buflen[0]>0;
+		(*pbuf != b->output[offset] && (*pbuf_ = *pbuf,pbuf_++,pbuf++,1))
+			|| (buflen[0]>0 && (pbuf++,buflen[0]--))
+		
+	);
 	memcpy(b->output,buffer,b->outdef);
 }
 int
 decode_basex(char *output,int outdef,char *alpha,char *padchar)
 {	char *pinput,*palpha;
-	int i,k,l;
+	int i,j,k,l;
 	for(	pinput = output,
 		palpha = alpha,
-		i = 0;
-		i < outdef && *palpha;
+		j = i = 0;
+		*palpha == '\0' && ++j,
+		i < outdef && !j;
 		i++,
 		pinput++
-	){	for(	palpha = alpha,
-			k=0,l=0;
-			*palpha && !l;
+	){	if(j) return i;
+		for(	palpha = alpha,
+			k=0,j=0,l=0;
+			padchar != NULL && *pinput == *padchar &&
+				(*pinput = -1, l = 1, k = 0),
+			*palpha == *pinput && 
+				(*pinput = k, l = 1) ,
+			*palpha != '\0' && !l;
 			palpha++,
 			k++
-		){
-			if(padchar != NULL && *pinput == *padchar){
-				*pinput = -1;
-				l = 1;
-				k = 0;
-			}
-			if(*palpha == *pinput){
-				*pinput = k;
-				l = 1;
-			}
-		}
+		);
 	}
-	if(!*palpha)return i;
+	if(j)return i;
 	return 0;
 }
 static error_t
@@ -320,8 +284,7 @@ int main(int argc, char **argv)
 		}
 	}
 	else
-	{	do{
-			switch(b->decode)
+	{	do{	switch(b->decode)
 			{	case 0:	if(args.buflen>=b->indef)
 					{	memcpy(b->input,args.buffer,b->indef);
 						b->fait.enc(b->input,b->output,b->alpha,b->indef);
@@ -335,7 +298,7 @@ int main(int argc, char **argv)
 						write_with_wrap(b,args.cwrap,args.lwrap,args.outfile);
 						args.buflen = 0;
 					}
-					break;
+				break;
 				case 1:	if(args.buflen>=b->outdef)
 					{	memset(b->input,'\0',b->indef);
 						i = buf_unwrap(b->output,args.buffer,b->outdef);
@@ -347,7 +310,7 @@ int main(int argc, char **argv)
 								exit(EXIT_FAILURE);
 							}
 							else
-							{	buf_garbage(b, j-1, b->output,&args.buflen);
+							{	buf_garbage(b, j-1,args.buffer,&args.buflen);
 								if(args.buflen<b->outdef)
 								{	destroy(b->input,&args.infile,&args.outfile);
 									fprintf(stderr,"\nerreur en entrée.\n");
@@ -369,7 +332,7 @@ int main(int argc, char **argv)
 						args.buflen -= (b->outdef + i);
 					}
 					else
-					{	printf("\nerreur en entree:%lu :: %i\n", args.buflen, b->outdef);
+					{	printf("\nerreur en entree.\n");
 						args.buflen = 0;
 					}
 					break;
