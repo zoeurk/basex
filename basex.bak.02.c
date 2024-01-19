@@ -1,5 +1,8 @@
 #include <stdio.h>
-/*#include <unistd.h>*/
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -39,13 +42,12 @@ struct basex{
 }basex;
 struct arguments{
 	struct basex *def;
-	FILE *infile, *outfile;
-	int decode, base, garbage, ___;
+	int infile,outfile,decode, base, garbage, ___;
 	size_t cwrap,lwrap;
 	char *buffer;
-	size_t buflen;
+	off_t buflen;
 }arguments;
-static struct arguments args = {NULL, NULL, NULL, 0,-1,0,0,0,0,NULL,0};
+static struct arguments args = {NULL,0,STDOUT_FILENO,0,-1,0,0,0,0,NULL,0};
 static struct basex *b;
 static void tobase64(char *input, char *output,char *base, ...);
 static void frombase64(char *input, char *output);
@@ -68,10 +70,10 @@ int squeeze_char(char buffer,char *nocharlist)
 		return 0;
 	return 1;
 }
-int read_with_wrap(struct basex *b, int garbage,FILE *fd)
-{	int inc = 0;
+ssize_t read_with_wrap(struct basex *b, int garbage,int fd)
+{	ssize_t inc = 0;
 	char *pbuf = b->output;
-	while(inc < b->outdef && (*pbuf = fgetc(fd)) != EOF)
+	while(inc < b->outdef && read(fd,pbuf,1) > 0)
 		if(b->pad && *pbuf == *b->pad){
 			inc++;
 			pbuf++;
@@ -93,36 +95,36 @@ int read_with_wrap(struct basex *b, int garbage,FILE *fd)
 		}
 	return inc;
 }
-void write_with_wrap(struct basex *b, size_t cwrap, size_t lwrap, FILE *fd)
-{	/*static */size_t _cwrap_ = 0, _lwrap_ = 1;
-	/*static */int inc;
+void write_with_wrap(struct basex *b, ssize_t cwrap, ssize_t lwrap, int fd)
+{	static ssize_t _cwrap_ = 0, _lwrap_ = 1;
+	static ssize_t inc;
 	for(inc = 0; inc < b->outdef; _cwrap_++, inc++){
 		if(lwrap && _cwrap_ == cwrap){
-			if(fputc('\n', fd) == EOF){
-				perror("fputc()");
+			if(write(fd, "\n", 1) < 0){
+				perror("write()");
 				exit(EXIT_FAILURE);
 			}
 			_lwrap_ = 1;
 			_cwrap_ = 0;
 		}
 		if(_cwrap_ != 0 && _cwrap_ == cwrap){
-			if(fputc(' ',fd) == EOF){
-				perror("fputc()");
+			if(write(fd," ",1) < 0){
+				perror("write()");
 				exit(EXIT_FAILURE);
 			}
 			_cwrap_ = 0;
 			_lwrap_++;
 		}
 		if(b->output[inc] != '\0')
-			if(fputc(b->output[inc],fd)  == EOF){
-				perror("fputc()");
+			if(write(fd,&b->output[inc],1) < 0){
+				perror("write()");
 				exit(EXIT_FAILURE);
 			}
 	}
 }
-size_t buf_unwrap(char *buffer,char *orig,size_t len)
+ssize_t buf_unwrap(char *buffer,char *orig,ssize_t len)
 {	char *pbuf = orig, *pbuf_ = buffer;
-	size_t i = 0,j = 0;
+	ssize_t i = 0,j = 0;
 	do
 		switch(*pbuf){
 			case ' ':case '\n': case '\t':
@@ -140,12 +142,13 @@ size_t buf_unwrap(char *buffer,char *orig,size_t len)
 	while(*pbuf && len > i);
 	return j;
 }
-void buf_garbage(struct basex *b, char *buffer, size_t *buflen)
+void buf_garbage(struct basex *b, int offset,char *buffer, off_t *buflen)
 {	char *pbuf,*pbuf_;
 	pbuf = pbuf_ = buffer;
 	do
 		if((squeeze_char(*pbuf,b->alpha) == 1)){
 			pbuf++;
+			//buffer++;
 			buflen[0]--;
 		}else{
 			*pbuf_ = *pbuf;
@@ -158,9 +161,11 @@ void buf_garbage(struct basex *b, char *buffer, size_t *buflen)
 }
 int
 decode_basex(char *output,int outdef,char *alpha,char *padchar)
-{	char *pinput = output,*palpha = alpha;
+{	char *pinput,*palpha;
 	int i,k,l;
-	for(	i = 0;
+	for(	pinput = output,
+		palpha = alpha,
+		i = 0;
 		i < outdef && *palpha;
 		i++,
 		pinput++
@@ -191,20 +196,20 @@ parse_opt
 	char *nobases[7] = {"BIN","16","16min","32","32hex","64","64url"};
 	switch(key)
 	{	case 'i': if(*arg == '-')
-			  {	arguments->infile = stdin;
+			  {	arguments->infile = STDIN_FILENO;
 			  }
 			  else
-			  {	if((arguments->infile = fopen(arg,"r")))
+			  {	if((arguments->infile = open(arg,O_RDONLY))<0)
 			  	{	fprintf(stderr,"I can not open %s\n",arg);
 					exit(errno);
 				}
   			 }
 			  break;
 		case 'o': if(*arg == '-')
-			  {	arguments->outfile = stdout;
+			  {	arguments->outfile = STDOUT_FILENO;
 			  }
 			  else
-			  {	if((arguments->outfile = fopen(arg,"w")))
+			  {	if((arguments->outfile = open(arg,O_WRONLY|O_CREAT|O_TRUNC,S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP))<0)
 			  	{	fprintf(stderr,"I can not open %s\n",arg);
 					exit(errno);
 				}
@@ -239,27 +244,23 @@ parse_opt
 }
 void end(int signum){
 	if(b->input)free(b->input);
-	if(args.infile)fclose(args.infile);
-	if(args.outfile)fclose(args.outfile);
+	if(args.infile)close(args.infile);
+	if(args.outfile)close(args.outfile);
 	exit(EXIT_SUCCESS);
 	
 }
-void destroy(void *p,FILE *fdin,FILE *fdout)
+void destroy(void *p,int *fdin,int *fdout)
 {	if(p)free(p);
-	if(fdin && fdin != stdin)fclose(fdin);
-	if(fdout && fdout != stdout)fclose(fdout);
+	if(*fdin)close(*fdin);
+	if(*fdout)close(*fdout);
 }
 
 static struct argp argp = {options,parse_opt,NULL,NULL,NULL,NULL,NULL};
 int main(int argc, char **argv)
 {	
-	size_t i;
+	ssize_t i;
 	int j;
 	argp_parse(&argp,argc,argv,0,0,&args);
-	if(args.infile == NULL)
-		args.infile = stdin;
-	if(args.outfile == NULL)
-		args.outfile = stdout;
 	switch(args.base)
 	{	case 0:args.def = fn_base2(base2,args.decode);break;
 		case 1:args.def = fn_base16(base16,args.decode);break;
@@ -273,13 +274,13 @@ int main(int argc, char **argv)
 	b = args.def;
 	if(signal(SIGINT,end) == SIG_ERR){
 		perror("signal()");
-		destroy(b->input,args.infile,args.outfile);
+		destroy(b->input,&args.infile,&args.outfile);
 		exit(EXIT_FAILURE);
 	}
 	if(args.buffer == NULL)
 	{	switch(b->decode)
 		{
-		case 0: while((i = fread(b->input,1,b->indef,args.infile)))
+		case 0: while((i = read(args.infile,b->input,b->indef)))
 			{	b->fait.enc(b->input,b->output,b->alpha,i);
 				write_with_wrap(b,args.cwrap,args.lwrap,args.outfile);
 				memset(b->output,'\0',b->outdef);
@@ -292,24 +293,24 @@ int main(int argc, char **argv)
 				{	
 					if(!args.garbage)
 					{	fprintf(stderr,"\nerreur en entrée:<%c>\n",b->output[j-1]);
-						destroy(b->input,args.infile,args.outfile);
+						destroy(b->input,&args.infile,&args.outfile);
 						exit(EXIT_FAILURE);
 					}
 				}
 				if(b->output[0] == -1 || b->output[1] == -1)
 				{
 					fprintf(stderr,"\nerreur en entrée.\n");
-					destroy(b->input,args.infile,args.outfile);
+					destroy(b->input,&args.infile,&args.outfile);
 					exit(EXIT_FAILURE);
 				}
 				b->fait.dec(b->output,b->input);
-				if(i != (size_t)b->outdef)
+				if(i != b->outdef)
 				{	fprintf(stderr,"\nerreur en enrée\n");
-					destroy(b->input,args.infile,args.outfile);
+					destroy(b->input,&args.infile,&args.outfile);
 					exit(EXIT_FAILURE);
 				}
-				if(fwrite(b->input,1,b->indef,args.outfile) == 0){
-					perror("fwrite()");
+				if(write(args.outfile,b->input,b->indef) < 0){
+					perror("write()");
 					exit(EXIT_FAILURE);
 				}
 				memset(b->output,'\0',b->outdef);
@@ -321,7 +322,7 @@ int main(int argc, char **argv)
 	else
 	{	do{
 			switch(b->decode)
-			{	case 0:	if(args.buflen>=(size_t)b->indef)
+			{	case 0:	if(args.buflen>=b->indef)
 					{	memcpy(b->input,args.buffer,b->indef);
 						b->fait.enc(b->input,b->output,b->alpha,b->indef);
 						args.buffer+=b->indef;
@@ -335,40 +336,40 @@ int main(int argc, char **argv)
 						args.buflen = 0;
 					}
 					break;
-				case 1:	if(args.buflen>=(size_t)b->outdef)
+				case 1:	if(args.buflen>=b->outdef)
 					{	memset(b->input,'\0',b->indef);
 						i = buf_unwrap(b->output,args.buffer,b->outdef);
 						while((j = decode_basex(b->output,b->outdef,b->alpha,b->pad)))
 						{	if(!args.garbage)
 							{
 								fprintf(stderr,"\nerreur en entrée:<%c>\n",b->output[j-1]);
-								destroy(b->input,args.infile,args.outfile);
+								destroy(b->input,&args.infile,&args.outfile);
 								exit(EXIT_FAILURE);
 							}
 							else
-							{	buf_garbage(b, b->output,&args.buflen);
-								if(args.buflen<(size_t)b->outdef)
-								{	destroy(b->input,args.infile,args.outfile);
+							{	buf_garbage(b, j-1, b->output,&args.buflen);
+								if(args.buflen<b->outdef)
+								{	destroy(b->input,&args.infile,&args.outfile);
 									fprintf(stderr,"\nerreur en entrée.\n");
 									exit(EXIT_FAILURE);
 								}
 							}
 						}
 						if(b->output[0] == -1 || b->output[1] == -1)
-						{	destroy(b->input,args.infile,args.outfile);
+						{	destroy(b->input,&args.infile,&args.outfile);
 							fprintf(stderr,"\nerreur en entrée.\n");
 							exit(EXIT_FAILURE);
 						}
 						b->fait.dec(b->output,b->input);
-						if(fwrite(b->input,1,b->indef,args.outfile) == 0){
-							perror("fwrite()");
+						if(write(args.outfile,b->input,b->indef) < 0){
+							perror("write()");
 							exit(EXIT_FAILURE);
 						}
 						args.buffer += (b->outdef + i);
 						args.buflen -= (b->outdef + i);
 					}
 					else
-					{	printf("\nerreur en entree\n");
+					{	printf("\nerreur en entree:%lu :: %i\n", args.buflen, b->outdef);
 						args.buflen = 0;
 					}
 					break;
@@ -377,7 +378,7 @@ int main(int argc, char **argv)
 			memset(b->output,'\0',b->outdef);
 		}while(args.buflen);
 	}
-	destroy(b->input,args.infile,args.outfile);
+	destroy(b->input,&args.infile,&args.outfile);
 	return 0;
 }
 void
